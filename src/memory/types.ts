@@ -4,16 +4,19 @@ export interface MemoryEntry {
   id: string
   timestamp: number
   content: string
-  /** Where this memory came from — a provider name, another agent, or 'self'. */
+  /** Where this memory came from — a tool id, another agent, or 'synthesis'. */
   source: string
+  /** True unless this memory came from a real (non-mock) tool or model call. */
+  isMock: boolean
 }
 
-export type TaskStatus = 'pending' | 'active' | 'done'
+export type TaskStatus = 'queued' | 'active' | 'done' | 'failed'
 
 export interface AgentTask {
   id: string
   agentId: AgentId
-  type: string
+  /** The tool this task will call, when it involves one. */
+  toolId: string | null
   title: string
   status: TaskStatus
   priority: 'low' | 'normal' | 'high'

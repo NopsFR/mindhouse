@@ -1,6 +1,6 @@
-import { createMockProvider } from './factory'
+import { createMockTool } from './factory'
 
-export const SpaceProvider = createMockProvider('orbit.space', 'Mock: Space Missions Feed', [
+export const spaceMissionsTool = createMockTool('space_missions', 'Space Missions', 'Active mission and launch status search.', 'Mock: Space Missions Feed', [
   {
     title: 'Orbital resupply mission reaches station',
     summary: 'Cargo vehicle completed docking after a routine two-day transit.',
@@ -19,7 +19,7 @@ export const SpaceProvider = createMockProvider('orbit.space', 'Mock: Space Miss
   },
 ])
 
-export const ScienceProvider = createMockProvider('orbit.science', 'Mock: Science Research Feed', [
+export const scienceResearchTool = createMockTool('science_research', 'Science Research', 'Astronomy and physics research search.', 'Mock: Science Research Feed', [
   {
     title: 'Exoplanet atmosphere shows signs of water vapor',
     summary: 'Spectroscopic data from a space telescope suggests water vapor in a nearby exoplanet atmosphere.',

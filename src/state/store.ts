@@ -1,35 +1,43 @@
 import { create } from 'zustand'
-import type { AgentId, AgentRuntime, AgentState } from '../agents/types'
+import type { AgentBrain, AgentId, AgentRuntime, AgentState } from '../agents/types'
 import { agentRegistry, specialistIds } from '../agents/registry'
-import type { AgentMessage } from '../communication/types'
+import { canSendMessageType } from '../agents/permissions'
+import type { AgentMessage, MessageType } from '../communication/types'
 import { messageBus } from '../communication/messageBus'
-import { emptyMemory, SHORT_TERM_LIMIT, LONG_TERM_LIMIT, type AgentMemoryState } from '../memory/types'
-import type { AgentTask } from '../memory/types'
-import { providersFor } from '../providers/registry'
+import { emptyMemory, SHORT_TERM_LIMIT, LONG_TERM_LIMIT, type AgentMemoryState, type TaskStatus } from '../memory/types'
+import { toolsForAgent } from '../tools/registry'
+import { resolveLLM } from '../llm/registry'
+import { listOllamaModels } from '../llm/providers/ollama'
 import {
+  buildBriefingPrompt,
+  buildCorrelationPrompt,
+  buildMemoryPrompt,
   confidenceFor,
-  correlatedBriefingLine,
   decideCorrelationTarget,
   randomBetween,
   sleep,
-  soloBriefingLine,
 } from '../simulation/engine'
 import { makeId } from './id'
 
 export type View = 'intro' | 'facility' | AgentId
+export type LocalModelStatus = 'disconnected' | 'connecting' | 'connected' | 'unavailable'
 
 interface FacilityState {
   view: View
   runtimes: Record<AgentId, AgentRuntime>
   memories: Record<AgentId, AgentMemoryState>
+  /** Mutable — the registry only supplies defaults. This is what actually changes when a real model connects. */
+  brains: Record<AgentId, AgentBrain>
   messages: AgentMessage[]
   simulationRunning: boolean
+  localModelStatus: LocalModelStatus
 
   enter: () => void
   goTo: (view: View) => void
   startSimulation: () => void
   stopSimulation: () => void
   triggerSpecialist: (id: AgentId) => void
+  connectLocalModel: () => Promise<void>
 }
 
 function initialRuntimes(): Record<AgentId, AgentRuntime> {
@@ -48,6 +56,14 @@ function initialMemories(): Record<AgentId, AgentMemoryState> {
   return memories
 }
 
+function initialBrains(): Record<AgentId, AgentBrain> {
+  const brains = {} as Record<AgentId, AgentBrain>
+  for (const id of Object.keys(agentRegistry) as AgentId[]) {
+    brains[id] = { ...agentRegistry[id].brain }
+  }
+  return brains
+}
+
 let simulationTimer: ReturnType<typeof setTimeout> | null = null
 let jarvisBusy = false
 const jarvisQueue: AgentMessage[] = []
@@ -63,8 +79,8 @@ export const useFacilityStore = create<FacilityState>((set, get) => {
     setRuntime(id, { state, activity })
   }
 
-  function addMemory(id: AgentId, tier: 'shortTerm' | 'longTerm', content: string, source: string) {
-    const entry = { id: makeId('mem'), timestamp: Date.now(), content, source }
+  function addMemory(id: AgentId, tier: 'shortTerm' | 'longTerm', content: string, source: string, isMock: boolean) {
+    const entry = { id: makeId('mem'), timestamp: Date.now(), content, source, isMock }
     const limit = tier === 'shortTerm' ? SHORT_TERM_LIMIT : LONG_TERM_LIMIT
     set((s) => {
       const current = s.memories[id]
@@ -73,28 +89,30 @@ export const useFacilityStore = create<FacilityState>((set, get) => {
     })
   }
 
-  function addTask(id: AgentId, title: string, type: string): AgentTask {
-    const task: AgentTask = {
+  function addTask(id: AgentId, title: string, toolId: string | null) {
+    const task = {
       id: makeId('task'),
       agentId: id,
-      type,
+      toolId,
       title,
-      status: 'active',
-      priority: 'normal',
+      status: 'queued' as TaskStatus,
+      priority: 'normal' as const,
       createdAt: Date.now(),
-      completedAt: null,
+      completedAt: null as number | null,
     }
     set((s) => ({ memories: { ...s.memories, [id]: { ...s.memories[id], tasks: [task, ...s.memories[id].tasks].slice(0, 12) } } }))
     return task
   }
 
-  function completeTask(id: AgentId, taskId: string) {
+  function setTaskStatus(id: AgentId, taskId: string, status: TaskStatus) {
     set((s) => ({
       memories: {
         ...s.memories,
         [id]: {
           ...s.memories[id],
-          tasks: s.memories[id].tasks.map((t) => (t.id === taskId ? { ...t, status: 'done', completedAt: Date.now() } : t)),
+          tasks: s.memories[id].tasks.map((t) =>
+            t.id === taskId ? { ...t, status, completedAt: status === 'done' || status === 'failed' ? Date.now() : t.completedAt } : t,
+          ),
         },
       },
     }))
@@ -108,54 +126,62 @@ export const useFacilityStore = create<FacilityState>((set, get) => {
     })
   }
 
-  function dispatchMessage(message: AgentMessage) {
+  /** The permission boundary for communication: an agent that lacks the right to send a message type never does. */
+  function send(from: AgentId, to: AgentId, type: MessageType, content: string, opts: Partial<AgentMessage> = {}): AgentMessage | null {
+    const definition = agentRegistry[from]
+    if (!canSendMessageType(definition, type)) return null
+    const message: AgentMessage = { id: makeId('msg'), from, to, type, content, priority: 'normal', timestamp: Date.now(), ...opts }
     set((s) => ({ messages: [message, ...s.messages].slice(0, 60) }))
     messageBus.publish(message)
-    recordRelationship(message.from, message.to, message.content)
-    recordRelationship(message.to, message.from, message.content)
+    recordRelationship(from, to, content)
+    recordRelationship(to, from, content)
+    return message
   }
 
   async function runSpecialistCycle(id: AgentId) {
     const runtime = get().runtimes[id]
     if (runtime.state !== 'idle') return
     const definition = agentRegistry[id]
-    const providers = providersFor(definition.providerNames)
-    if (providers.length === 0) return
+    const tools = toolsForAgent(definition)
+    if (tools.length === 0) return
 
-    const task = addTask(id, `Sweep: ${definition.responsibilities[0]}`, 'sweep')
+    setAgentState(id, 'thinking', 'Selecting a task')
+    await sleep(randomBetween(300, 600))
 
-    setAgentState(id, 'thinking', 'Reviewing incoming signals')
-    await sleep(randomBetween(1400, 2200))
+    const tool = tools[Math.floor(Math.random() * tools.length)]
+    const task = addTask(id, `Run ${tool.name}`, tool.id)
+    setTaskStatus(id, task.id, 'active')
 
-    const provider = providers[Math.floor(Math.random() * providers.length)]
-    setAgentState(id, 'researching', `Checking ${provider.sourceLabel}`)
-    const [item] = await provider.fetch()
-    await sleep(randomBetween(1400, 2000))
+    setAgentState(id, 'researching', `Calling ${tool.name}`)
+    const result = await tool.execute()
+    if (!result.ok || result.items.length === 0) {
+      setTaskStatus(id, task.id, 'failed')
+      setAgentState(id, 'idle', null)
+      return
+    }
+    const item = result.items[0]
 
-    setAgentState(id, 'processing', 'Evaluating relevance')
-    await sleep(randomBetween(1000, 1600))
-    addMemory(id, 'shortTerm', `${item.title} — ${item.summary}`, provider.sourceLabel)
+    setAgentState(id, 'processing', 'Synthesizing finding')
+    const llm = resolveLLM(get().brains[id])
+    const memoryResponse = await llm.generate({ messages: buildMemoryPrompt(definition, item) })
+    addMemory(id, 'shortTerm', memoryResponse.content, result.sourceLabel, memoryResponse.isMock)
+    setTaskStatus(id, task.id, 'done')
 
     setAgentState(id, 'communicating', 'Reporting to Jarvis')
-    const confidence = confidenceFor(item)
-    const message: AgentMessage = {
-      id: makeId('msg'),
-      from: id,
-      to: 'jarvis',
-      timestamp: Date.now(),
-      type: 'finding',
-      content: `${item.title} — ${item.summary}`,
-      priority: item.severity === 'high' ? 'high' : 'normal',
-      confidence,
-      metadata: { tags: item.tags.join(','), provider: provider.name },
-    }
-    dispatchMessage(message)
-    completeTask(id, task.id)
-    await sleep(600)
+    const messageType = item.severity === 'high' ? 'alert' : 'report'
+    const message = send(id, 'jarvis', messageType, memoryResponse.content, {
+      priority: item.severity === 'high' ? 'critical' : item.severity === 'medium' ? 'high' : 'normal',
+      confidence: confidenceFor(item),
+      metadata: { tags: item.tags.join(','), toolId: tool.id, isMock: result.isMock },
+    })
+
+    await sleep(400)
     setAgentState(id, 'idle', null)
 
-    jarvisQueue.push(message)
-    void drainJarvisQueue()
+    if (message) {
+      jarvisQueue.push(message)
+      void drainJarvisQueue()
+    }
   }
 
   async function drainJarvisQueue() {
@@ -169,65 +195,47 @@ export const useFacilityStore = create<FacilityState>((set, get) => {
   }
 
   async function runJarvisCycle(message: AgentMessage) {
+    const jarvisDef = agentRegistry.jarvis
     const fromDef = agentRegistry[message.from]
-    setAgentState('jarvis', 'thinking', `Reviewing update from ${fromDef.name}`)
-    await sleep(randomBetween(1000, 1500))
 
-    setAgentState('jarvis', 'processing', 'Assessing cross-domain relevance')
-    await sleep(randomBetween(1000, 1500))
+    setAgentState('jarvis', 'thinking', `Reviewing report from ${fromDef.name}`)
+    await sleep(randomBetween(300, 600))
 
     const tags = (message.metadata?.tags as string)?.split(',').filter(Boolean) ?? []
     const target = decideCorrelationTarget(message.from, { id: message.id, title: '', summary: '', timestamp: 0, tags })
 
-    let briefingLine: string
+    let correlation: { targetName: string; response: string } | null = null
+
     if (target && get().runtimes[target].state === 'idle') {
       const targetDef = agentRegistry[target]
-      setAgentState('jarvis', 'communicating', `Requesting correlation from ${targetDef.name}`)
-      const request: AgentMessage = {
-        id: makeId('msg'),
-        from: 'jarvis',
-        to: target,
-        timestamp: Date.now(),
-        type: 'request',
-        content: `Correlate: ${message.content}`,
-        priority: 'normal',
+      setAgentState('jarvis', 'communicating', `Asking ${targetDef.name} to correlate`)
+      const request = send('jarvis', target, 'question', `Correlate: ${message.content}`)
+      if (request) {
+        setAgentState(target, 'thinking', `Correlating with ${fromDef.name}'s report`)
+        await sleep(randomBetween(400, 700))
+        setAgentState(target, 'processing', 'Checking memory')
+
+        const targetLLM = resolveLLM(get().brains[target])
+        // Only a genuine tool-derived finding counts as "what you're tracking" — never a previous correlation
+        // check, or answers would nest inside each other, quoting the last quote forever.
+        const ownRecent = get().memories[target].shortTerm.find((m) => m.source !== 'correlation')?.content ?? null
+        const response = await targetLLM.generate({ messages: buildCorrelationPrompt(targetDef, fromDef.name, message.content, ownRecent) })
+        addMemory(target, 'shortTerm', `Correlation check for ${fromDef.name}: ${response.content}`, 'correlation', response.isMock)
+        send(target, 'jarvis', 'response', response.content, { confidence: 0.6 + Math.random() * 0.3 })
+        setAgentState(target, 'idle', null)
+
+        correlation = { targetName: targetDef.name, response: response.content }
+        setAgentState('jarvis', 'processing', 'Incorporating response')
+        await sleep(randomBetween(300, 500))
       }
-      dispatchMessage(request)
-      await sleep(500)
-
-      setAgentState(target, 'thinking', `Correlating with ${fromDef.name}'s report`)
-      await sleep(randomBetween(1200, 1800))
-      setAgentState(target, 'processing', 'Cross-referencing memory')
-      await sleep(randomBetween(900, 1300))
-
-      const relevant = Math.random() < 0.35
-      const responseContent = relevant
-        ? `Found related activity worth merging into the active picture.`
-        : `No related activity in current memory — likely isolated.`
-      const response: AgentMessage = {
-        id: makeId('msg'),
-        from: target,
-        to: 'jarvis',
-        timestamp: Date.now(),
-        type: 'response',
-        content: responseContent,
-        priority: 'low',
-        confidence: 0.6 + Math.random() * 0.3,
-      }
-      addMemory(target, 'shortTerm', `Correlation check for ${fromDef.name}: ${responseContent}`, 'jarvis')
-      dispatchMessage(response)
-      setAgentState(target, 'idle', null)
-
-      setAgentState('jarvis', 'processing', 'Incorporating response')
-      await sleep(randomBetween(700, 1100))
-      briefingLine = correlatedBriefingLine(fromDef.name, targetDef.name, { id: message.id, title: message.content, summary: '', timestamp: 0, tags }, relevant)
-    } else {
-      briefingLine = soloBriefingLine(fromDef.name, { id: message.id, title: message.content, summary: '', timestamp: 0, tags })
     }
 
-    addMemory('jarvis', 'longTerm', briefingLine, 'synthesis')
+    const jarvisLLM = resolveLLM(get().brains.jarvis)
+    const briefing = await jarvisLLM.generate({ messages: buildBriefingPrompt(jarvisDef, fromDef.name, message.content, correlation) })
+    addMemory('jarvis', 'longTerm', briefing.content, 'synthesis', briefing.isMock)
+
     setAgentState('jarvis', 'reporting', 'Updating facility briefing')
-    await sleep(700)
+    await sleep(500)
     setAgentState('jarvis', 'idle', null)
   }
 
@@ -248,8 +256,10 @@ export const useFacilityStore = create<FacilityState>((set, get) => {
     view: 'intro',
     runtimes: initialRuntimes(),
     memories: initialMemories(),
+    brains: initialBrains(),
     messages: [],
     simulationRunning: false,
+    localModelStatus: 'disconnected',
 
     enter: () => set({ view: 'facility' }),
     goTo: (view) => set({ view }),
@@ -265,5 +275,23 @@ export const useFacilityStore = create<FacilityState>((set, get) => {
       if (simulationTimer) clearTimeout(simulationTimer)
     },
     triggerSpecialist: (id) => void runSpecialistCycle(id),
+
+    connectLocalModel: async () => {
+      set({ localModelStatus: 'connecting' })
+      try {
+        const models = await listOllamaModels()
+        if (models.length === 0) {
+          set({ localModelStatus: 'unavailable' })
+          return
+        }
+        const model = models[0]
+        set((s) => ({
+          brains: { ...s.brains, jarvis: { ...s.brains.jarvis, provider: 'local', model } },
+          localModelStatus: 'connected',
+        }))
+      } catch {
+        set({ localModelStatus: 'unavailable' })
+      }
+    },
   }
 })

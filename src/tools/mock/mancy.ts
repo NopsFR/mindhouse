@@ -1,6 +1,6 @@
-import { createMockProvider } from './factory'
+import { createMockTool } from './factory'
 
-export const NewsProvider = createMockProvider('mancy.news', 'Mock: Local News Feed', [
+export const localNewsTool = createMockTool('local_news', 'Local News', 'Manchester and Greater Manchester news search.', 'Mock: Local News Feed', [
   {
     title: 'Redevelopment approved near Piccadilly',
     summary: 'Planning committee approved a mixed-use scheme adjacent to Piccadilly Gardens, citing housing targets.',
@@ -18,7 +18,7 @@ export const NewsProvider = createMockProvider('mancy.news', 'Mock: Local News F
   },
 ])
 
-export const TransportProvider = createMockProvider('mancy.transport', 'Mock: Transport Status Feed', [
+export const transportStatusTool = createMockTool('transport_status', 'Transport Status', 'Live Greater Manchester transport disruption lookup.', 'Mock: Transport Status Feed', [
   {
     title: 'Metrolink disruption on Altrincham line',
     summary: 'Signal fault reported between Altrincham and Sale, replacement buses running.',
@@ -39,7 +39,7 @@ export const TransportProvider = createMockProvider('mancy.transport', 'Mock: Tr
   },
 ])
 
-export const WeatherProvider = createMockProvider('mancy.weather', 'Mock: Regional Weather Feed', [
+export const regionalWeatherTool = createMockTool('regional_weather', 'Regional Weather', 'Weather conditions and warnings for Greater Manchester.', 'Mock: Regional Weather Feed', [
   {
     title: 'Heavy rain warning issued',
     summary: 'A yellow weather warning for rain covers Greater Manchester into the evening.',

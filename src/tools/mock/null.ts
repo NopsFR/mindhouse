@@ -1,6 +1,6 @@
-import { createMockProvider } from './factory'
+import { createMockTool } from './factory'
 
-export const CVEProvider = createMockProvider('null.cve', 'Mock: CVE Disclosure Feed', [
+export const cveLookupTool = createMockTool('cve_lookup', 'CVE Lookup', 'Recent CVE disclosures and severity data.', 'Mock: CVE Disclosure Feed', [
   {
     title: 'Critical deserialization flaw in a widely used logging library',
     summary: 'Unauthenticated remote code execution reported; patches available upstream.',
@@ -21,7 +21,7 @@ export const CVEProvider = createMockProvider('null.cve', 'Mock: CVE Disclosure 
   },
 ])
 
-export const SecurityNewsProvider = createMockProvider('null.securitynews', 'Mock: Security Research Feed', [
+export const securityResearchTool = createMockTool('security_research', 'Security Research', 'Threat actor and campaign research search.', 'Mock: Security Research Feed', [
   {
     title: 'Ransomware group shifts to double-extortion tactics',
     summary: 'Researchers observe increased data exfiltration ahead of encryption in recent incidents.',
@@ -42,7 +42,7 @@ export const SecurityNewsProvider = createMockProvider('null.securitynews', 'Moc
   },
 ])
 
-export const ThreatIntelProvider = createMockProvider('null.threatintel', 'Mock: Threat Intelligence Feed', [
+export const threatIntelTool = createMockTool('threat_intel', 'Threat Intelligence', 'Malware family and infrastructure correlation search.', 'Mock: Threat Intelligence Feed', [
   {
     title: 'New malware family observed in the wild',
     summary: 'A modular loader with anti-analysis features seen across several campaigns.',

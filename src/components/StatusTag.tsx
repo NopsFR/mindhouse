@@ -10,31 +10,14 @@ const LABEL: Record<AgentState, string> = {
   reporting: 'Reporting',
 }
 
-interface StatusTagProps {
-  state: AgentState
-  accent: string
-}
-
-export function StatusTag({ state, accent }: StatusTagProps) {
+/** A dot and a word — no pill, no border. Hierarchy comes from color and motion, not chrome. */
+export function StatusTag({ state, accent }: { state: AgentState; accent: string }) {
   const active = state !== 'idle'
   return (
-    <span
-      className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-medium tracking-[0.12em] uppercase"
-      style={{
-        borderColor: active ? `${accent}55` : 'var(--color-border)',
-        color: active ? accent : 'var(--color-text-faint)',
-        background: active ? `${accent}14` : 'transparent',
-      }}
-    >
+    <span className="inline-flex items-center gap-1.5 text-[11px] tracking-[0.04em]" style={{ color: active ? accent : 'var(--color-text-faint)' }}>
       <span
         className={active ? 'animate-pulse-soft' : ''}
-        style={{
-          width: 5,
-          height: 5,
-          borderRadius: '50%',
-          background: active ? accent : 'var(--color-text-faint)',
-          display: 'inline-block',
-        }}
+        style={{ width: 5, height: 5, borderRadius: '50%', background: active ? accent : 'var(--color-text-faint)', display: 'inline-block' }}
       />
       {LABEL[state]}
     </span>

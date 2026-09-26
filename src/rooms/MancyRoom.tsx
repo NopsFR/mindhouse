@@ -1,11 +1,11 @@
-import { motion } from 'motion/react'
 import { agentRegistry } from '../agents/registry'
 import { useFacilityStore } from '../state/store'
+import { RoomReadout } from '../components/RoomReadout'
 import { RoomShell } from './RoomShell'
 
 const ACCENT = agentRegistry.mancy.accent
 
-function MancyVisual() {
+export function MancyVisual() {
   const runtime = useFacilityStore((s) => s.runtimes.mancy)
   const shortTerm = useFacilityStore((s) => s.memories.mancy.shortTerm)
   const active = runtime.state !== 'idle'
@@ -22,10 +22,10 @@ function MancyVisual() {
 
         {/* Abstract Manchester street grid */}
         {Array.from({ length: 9 }).map((_, i) => (
-          <line key={`v${i}`} x1={40 + i * 68} y1="20" x2={40 + i * 68} y2="400" stroke="var(--color-border)" strokeWidth="1" />
+          <line key={`v${i}`} x1={40 + i * 68} y1="20" x2={40 + i * 68} y2="400" stroke="var(--color-hairline)" strokeWidth="1" />
         ))}
         {Array.from({ length: 7 }).map((_, i) => (
-          <line key={`h${i}`} x1="20" y1={40 + i * 58} x2="620" y2={40 + i * 58} stroke="var(--color-border)" strokeWidth="1" />
+          <line key={`h${i}`} x1="20" y1={40 + i * 58} x2="620" y2={40 + i * 58} stroke="var(--color-hairline)" strokeWidth="1" />
         ))}
 
         {/* Abstract river network — Irwell / Irk / Medlock, stylized */}
@@ -55,26 +55,14 @@ function MancyVisual() {
         ))}
       </svg>
 
-      <motion.div
-        animate={{ opacity: active ? 1 : 0.6 }}
-        className="pointer-events-none absolute top-8 left-8 max-w-xs rounded-md border px-4 py-3"
-        style={{ borderColor: `${ACCENT}33`, background: 'rgba(5,5,6,0.55)' }}
-      >
-        <p className="text-[10px] uppercase tracking-[0.14em]" style={{ color: ACCENT }}>
-          Local timeline
-        </p>
-        {shortTerm.length === 0 ? (
-          <p className="mt-1.5 text-[12px] italic text-[var(--color-text-faint)]">No signals logged yet.</p>
-        ) : (
-          <ul className="mt-1.5 space-y-1">
-            {shortTerm.slice(0, 3).map((m) => (
-              <li key={m.id} className="text-[12px] text-[var(--color-text-dim)]">
-                {m.content.split(' — ')[0]}
-              </li>
-            ))}
-          </ul>
-        )}
-      </motion.div>
+      <RoomReadout
+        accent={ACCENT}
+        label="Local timeline"
+        items={shortTerm.slice(0, 3).map((m) => m.content)}
+        emptyText="No signals logged yet."
+        active={active}
+        corner="top-left"
+      />
     </div>
   )
 }

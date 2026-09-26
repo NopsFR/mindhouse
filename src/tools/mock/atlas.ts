@@ -1,6 +1,6 @@
-import { createMockProvider } from './factory'
+import { createMockTool } from './factory'
 
-export const GlobalNewsProvider = createMockProvider('atlas.globalnews', 'Mock: Global Events Feed', [
+export const globalNewsTool = createMockTool('global_news', 'Global News', 'International news and major world events search.', 'Mock: Global Events Feed', [
   {
     title: 'Central bank signals pause on rate changes',
     summary: 'Policymakers cite easing inflation data as grounds for holding rates steady.',

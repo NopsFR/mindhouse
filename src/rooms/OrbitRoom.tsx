@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { motion } from 'motion/react'
 import { agentRegistry } from '../agents/registry'
 import { useFacilityStore } from '../state/store'
+import { RoomReadout } from '../components/RoomReadout'
 import { RoomShell } from './RoomShell'
 
 const ACCENT = agentRegistry.orbit.accent
@@ -20,7 +21,7 @@ function useStarField(count: number) {
   )
 }
 
-function OrbitVisual() {
+export function OrbitVisual() {
   const runtime = useFacilityStore((s) => s.runtimes.orbit)
   const shortTerm = useFacilityStore((s) => s.memories.orbit.shortTerm)
   const active = runtime.state !== 'idle'
@@ -45,26 +46,14 @@ function OrbitVisual() {
         </motion.svg>
       </div>
 
-      <motion.div
-        animate={{ opacity: active ? 1 : 0.6 }}
-        className="pointer-events-none absolute top-8 left-8 max-w-xs rounded-md border px-4 py-3"
-        style={{ borderColor: `${ACCENT}33`, background: 'rgba(5,5,6,0.55)' }}
-      >
-        <p className="text-[10px] uppercase tracking-[0.14em]" style={{ color: ACCENT }}>
-          Observatory log
-        </p>
-        {shortTerm.length === 0 ? (
-          <p className="mt-1.5 text-[12px] italic text-[var(--color-text-faint)]">Sky is quiet — nothing logged yet.</p>
-        ) : (
-          <ul className="mt-1.5 space-y-1">
-            {shortTerm.slice(0, 3).map((m) => (
-              <li key={m.id} className="text-[12px] text-[var(--color-text-dim)]">
-                {m.content.split(' — ')[0]}
-              </li>
-            ))}
-          </ul>
-        )}
-      </motion.div>
+      <RoomReadout
+        accent={ACCENT}
+        label="Observatory log"
+        items={shortTerm.slice(0, 3).map((m) => m.content)}
+        emptyText="Sky is quiet — nothing logged yet."
+        active={active}
+        corner="top-left"
+      />
     </div>
   )
 }

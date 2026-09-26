@@ -2,11 +2,11 @@
 
 :root {
   --color-bg: #050506;
-  --color-bg-2: #08090b;
+  --color-bg-2: #0a0b0d;
   --color-panel: #0d0e11;
   --color-panel-2: #15171b;
-  --color-border: rgba(255, 255, 255, 0.08);
-  --color-border-strong: rgba(255, 255, 255, 0.16);
+  --color-hairline: rgba(255, 255, 255, 0.09);
+  --color-border-strong: rgba(255, 255, 255, 0.18);
   --color-text: #ece9e1;
   --color-text-dim: #9b9a94;
   --color-text-faint: #67665f;
@@ -19,6 +19,7 @@
 
   --font-display: "Fraunces", ui-serif, Georgia, serif;
   --font-ui: "Manrope", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
 }
 
 * {
@@ -43,6 +44,11 @@ body {
 .font-display {
   font-family: var(--font-display);
 }
+.font-mono,
+code,
+.mono {
+  font-family: var(--font-mono);
+}
 
 /* Fine architectural grain — extremely subtle, never a "particle background". */
 .grain::before {
@@ -51,7 +57,7 @@ body {
   inset: 0;
   pointer-events: none;
   z-index: 60;
-  opacity: 0.035;
+  opacity: 0.03;
   mix-blend-mode: overlay;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
@@ -61,7 +67,7 @@ body {
   position: fixed;
   inset: 0;
   z-index: 55;
-  background: radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, 0.55) 100%);
+  background: radial-gradient(ellipse at center, transparent 40%, rgba(0, 0, 0, 0.6) 100%);
 }
 
 ::selection {
@@ -69,8 +75,8 @@ body {
 }
 
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -88,11 +94,10 @@ body {
   animation: pulse-soft 2.6s ease-in-out infinite;
 }
 
-@keyframes drift {
-  0% { transform: translateY(0); }
-  50% { transform: translateY(-3px); }
-  100% { transform: translateY(0); }
+@keyframes breathe {
+  0%, 100% { opacity: 0.75; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.015); }
 }
-.animate-drift {
-  animation: drift 6s ease-in-out infinite;
+.animate-breathe {
+  animation: breathe 4.5s ease-in-out infinite;
 }

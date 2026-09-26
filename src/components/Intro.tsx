@@ -16,7 +16,7 @@ export function Intro() {
       initial={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.6 }}
-      className="flex h-full w-full flex-col items-center justify-center gap-6 overflow-y-auto px-6 py-10 text-center sm:gap-10"
+      className="absolute inset-0 flex flex-col items-center justify-center gap-6 overflow-y-auto px-6 py-10 text-center sm:gap-10"
     >
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7 }}>
         <h1 className="font-display text-4xl tracking-[0.08em] text-[var(--color-text)] sm:text-5xl md:text-6xl">MINDHOUSE</h1>
