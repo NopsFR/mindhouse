@@ -58,6 +58,8 @@ export interface AgentDefinition {
   /** Explicit allow-list of tool ids (see `tools/registry.ts`). This IS the permission boundary for tools. */
   toolIds: string[]
   responsibilities: string[]
+  /** Keywords Jarvis matches a user message against to decide whether this specialist is relevant. */
+  topics: string[]
   isCoordinator?: boolean
 }
 

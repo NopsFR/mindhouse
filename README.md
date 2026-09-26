@@ -73,6 +73,40 @@ agent wasn't assigned. Each agent's `permissions` gate which `AgentMessage` type
 (`agents/permissions.ts`); Jarvis is the only agent that can delegate (`request`/`question`),
 specialists can only report (`report`/`alert`) and answer (`response`).
 
+## Conversation vs. environment
+
+These are deliberately two separate layers (`conversation/` vs `memory/`):
+
+- **Conversation** — what the user actually typed and what an agent said back
+  (`state.conversations`, rendered by `ChatDock`). A greeting gets a greeting; nothing here is ever
+  a dump of an agent's internal intelligence memory.
+- **Environment** — the facility's own state (agent runtime, tasks, tool calls, the message bus).
+  Visible in each room and the Activity Feed, but never injected into a chat reply as text.
+
+Talking to **Jarvis** routes through `conversation/intents.ts`: a greeting gets a greeting; a
+question that needs current information (`detectRelevantSpecialist`, matched against each
+specialist's declared `topics`) gets *visibly* delegated — the specialist's room goes into
+`researching`, a real `AgentMessage` crosses the bus, and Jarvis answers in plain language citing
+what it found. Everything else is answered directly, from a small hand-written knowledge base
+(`conversation/knowledge.ts`) when no real model is connected, or by the connected model when one
+is. Specialists work the same way one level down: no delegation, but the same
+greeting/knowledge/research split, using their own tools.
+
+### On cost — why the honest answer isn't "plug in a real LLM everywhere"
+
+This project has a £0 budget, so there is no server-side model call anyone else's key pays for.
+Two paths exist, both genuinely free:
+
+1. **The heuristic layer** (default) — the hand-written knowledge base above. Real, curated,
+   accurate for what it covers; honest about what it doesn't cover.
+2. **A local model via Ollama** (`llm/providers/ollama.ts`) — genuinely wired up, not a stub. If
+   *you* have Ollama running with a model pulled, "Connect local model" in Jarvis's room switches
+   Jarvis onto it for real, and conversation quality jumps accordingly. This only benefits whoever
+   is running Ollama on the machine viewing the page — a stranger visiting the deployed site
+   without Ollama running still gets the heuristic layer, not a generic cloud LLM, because giving
+   *every* visitor a real model would mean a server holding a paid or free-tier API key, which
+   isn't part of this budget.
+
 ## Development
 
 ```bash

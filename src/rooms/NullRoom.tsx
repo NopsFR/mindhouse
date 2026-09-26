@@ -33,19 +33,10 @@ export function NullVisual() {
           </g>
         ))}
 
+        {/* Pins on the board, not nodes on a network — no connecting lines between findings. */}
         {nodes.map((n, i) => (
           <g key={n.id}>
-            {i > 0 && (
-              <line
-                x1={nodes[i - 1].x}
-                y1={nodes[i - 1].y}
-                x2={n.x}
-                y2={n.y}
-                stroke={ACCENT}
-                strokeOpacity="0.25"
-                strokeWidth="1"
-              />
-            )}
+            <line x1={n.x} y1={n.y} x2={n.x} y2="330" stroke={ACCENT} strokeOpacity="0.15" strokeWidth="1" />
             <circle cx={n.x} cy={n.y} r={active && i === 0 ? 7 : 5} fill={ACCENT} opacity={i === 0 ? 0.95 : 0.5 - i * 0.06}>
               {active && i === 0 && <animate attributeName="r" values="5;8;5" dur="2s" repeatCount="indefinite" />}
             </circle>

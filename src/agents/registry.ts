@@ -32,6 +32,7 @@ export const agentRegistry: Record<AgentId, AgentDefinition> = {
       'Identify relationships across domains',
       'Maintain facility-wide awareness',
     ],
+    topics: [],
     isCoordinator: true,
   },
   mancy: {
@@ -49,6 +50,7 @@ export const agentRegistry: Record<AgentId, AgentDefinition> = {
     permissions: ['tool:execute', 'agent:report', 'agent:answer', 'memory:write'],
     toolIds: ['local_news', 'transport_status', 'regional_weather'],
     responsibilities: ['Local news', 'Transport disruptions', 'Weather', 'Infrastructure changes'],
+    topics: ['manchester', 'greater manchester', 'metrolink', 'salford', 'piccadilly', 'transport', 'bus', 'tram', 'train station'],
   },
   null: {
     id: 'null',
@@ -65,6 +67,7 @@ export const agentRegistry: Record<AgentId, AgentDefinition> = {
     permissions: ['tool:execute', 'agent:report', 'agent:answer', 'memory:write'],
     toolIds: ['cve_lookup', 'security_research', 'threat_intel'],
     responsibilities: ['CVEs', 'Threat intelligence', 'Breaches', 'Ransomware activity', 'Attack infrastructure'],
+    topics: ['cve', 'security', 'cybersecurity', 'hack', 'vulnerability', 'malware', 'ransomware', 'breach', 'exploit', 'threat', 'phishing'],
   },
   atlas: {
     id: 'atlas',
@@ -81,6 +84,7 @@ export const agentRegistry: Record<AgentId, AgentDefinition> = {
     permissions: ['tool:execute', 'agent:report', 'agent:answer', 'memory:write'],
     toolIds: ['global_news'],
     responsibilities: ['International events', 'Natural disasters', 'Economic developments', 'Geopolitics'],
+    topics: ['world', 'global', 'geopolitics', 'economy', 'international', 'earthquake', 'disaster', 'trade', 'election'],
   },
   orbit: {
     id: 'orbit',
@@ -96,6 +100,7 @@ export const agentRegistry: Record<AgentId, AgentDefinition> = {
     permissions: ['tool:execute', 'agent:report', 'agent:answer', 'memory:write'],
     toolIds: ['space_missions', 'science_research'],
     responsibilities: ['Space missions', 'Astronomy', 'Research discoveries', 'Space weather'],
+    topics: ['space', 'astronomy', 'nasa', 'planet', 'galaxy', 'mission', 'rocket', 'telescope', 'exoplanet', 'star', 'orbit'],
   },
 }
 

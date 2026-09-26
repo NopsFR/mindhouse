@@ -10,26 +10,14 @@ import type { AgentId } from '../agents/types'
 export function DoorwayPreview({ agentId, accent, active }: { agentId: AgentId; accent: string; active: boolean }) {
   switch (agentId) {
     case 'jarvis':
+      // A single calm light, not a hub with nodes wired to it.
       return (
-        <svg viewBox="0 0 200 200" className="h-full w-full">
-          {[0, 1, 2, 3].map((i) => {
-            const angle = (i / 4) * Math.PI * 2 - Math.PI / 2
-            const x = 100 + Math.cos(angle) * 70
-            const y = 100 + Math.sin(angle) * 70
-            return <line key={i} x1="100" y1="100" x2={x} y2={y} stroke={accent} strokeOpacity={active ? 0.4 : 0.14} strokeWidth="1" />
-          })}
-          <circle cx="100" cy="100" r="30" fill="none" stroke={accent} strokeOpacity="0.3" strokeWidth="1" />
-          <motion.circle
-            cx="100"
-            cy="100"
-            r="20"
-            fill={`${accent}20`}
-            stroke={accent}
-            strokeWidth="1.2"
-            animate={{ r: active ? [20, 23, 20] : 20, opacity: active ? [0.8, 1, 0.8] : 0.6 }}
-            transition={{ duration: 2.4, repeat: active ? Infinity : 0 }}
-          />
-        </svg>
+        <motion.div
+          animate={{ opacity: active ? [0.55, 0.8, 0.55] : 0.45 }}
+          transition={{ duration: 4.5, repeat: Infinity, ease: 'easeInOut' }}
+          className="h-full w-full"
+          style={{ background: `radial-gradient(ellipse at 50% 30%, ${accent}30 0%, ${accent}0a 40%, transparent 70%)` }}
+        />
       )
     case 'mancy':
       return (
@@ -48,8 +36,6 @@ export function DoorwayPreview({ agentId, accent, active }: { agentId: AgentId; 
           {[60, 110, 150].map((x) => (
             <line key={x} x1={x} y1="30" x2={x} y2="160" stroke="var(--color-hairline)" strokeWidth="1" strokeDasharray="2 5" />
           ))}
-          <line x1="60" y1="120" x2="110" y2="90" stroke={accent} strokeOpacity="0.3" strokeWidth="1" />
-          <line x1="110" y1="90" x2="150" y2="60" stroke={accent} strokeOpacity="0.3" strokeWidth="1" />
           <circle cx="60" cy="120" r="4" fill={accent} opacity="0.6" />
           <circle cx="110" cy="90" r="4" fill={accent} opacity="0.7" />
           <circle cx="150" cy="60" r={active ? 6 : 4} fill={accent} opacity={active ? 0.95 : 0.7} />
