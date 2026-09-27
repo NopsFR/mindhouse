@@ -6,12 +6,24 @@ import type { AgentMessage, MessageType } from '../communication/types'
 import { messageBus } from '../communication/messageBus'
 import { emptyMemory, SHORT_TERM_LIMIT, LONG_TERM_LIMIT, type AgentMemoryState, type TaskStatus } from '../memory/types'
 import type { ChatMessage } from '../conversation/types'
-import { classifyIntent, detectRelevantSpecialist, pickGreeting } from '../conversation/intents'
-import { matchKnowledge } from '../conversation/knowledge'
+import {
+  classifyIntent,
+  continuationReply,
+  detectRelevantSpecialists,
+  outOfDomainReply,
+  pickChitchat,
+  pickGreeting,
+  topicClarification,
+} from '../conversation/intents'
+import { matchKnowledge, matchKnowledgeAnywhere } from '../conversation/knowledge'
+import { buildSystemPrompt } from '../agents/prompt'
 import { toolsForAgent } from '../tools/registry'
 import { resolveLLM } from '../llm/registry'
 import { listOllamaModels } from '../llm/providers/ollama'
-import type { LLMMessage } from '../llm/types'
+import type { LLMMessage, ToolSpec } from '../llm/types'
+import { checkDevToolsAvailable } from '../devtools/client'
+import { toolsForLevel } from '../devtools/registry'
+import type { AutonomyLevel, DevTool, ToolActivityRecord } from '../devtools/types'
 import {
   buildBriefingPrompt,
   buildCorrelationPrompt,
@@ -37,6 +49,12 @@ interface FacilityState {
   messages: AgentMessage[]
   simulationRunning: boolean
   localModelStatus: LocalModelStatus
+  /** True only when the local-only Vite dev-tools plugin actually responded — never true on the deployed site. */
+  devToolsAvailable: boolean
+  workspaceRoot: string | null
+  autonomyLevel: AutonomyLevel
+  /** Real tool-call log per agent — every entry is an actual request/response, never fabricated. */
+  toolActivity: Record<AgentId, ToolActivityRecord[]>
 
   enter: () => void
   goTo: (view: View) => void
@@ -44,6 +62,8 @@ interface FacilityState {
   stopSimulation: () => void
   triggerSpecialist: (id: AgentId) => void
   connectLocalModel: () => Promise<void>
+  checkDevTools: () => Promise<void>
+  setAutonomyLevel: (level: AutonomyLevel) => void
   sendChatMessage: (agentId: AgentId, text: string) => Promise<void>
 }
 
@@ -79,11 +99,30 @@ function initialConversations(): Record<AgentId, ChatMessage[]> {
   return conversations
 }
 
-/** A message admitting the honest limit of the heuristic layer, rather than faking general knowledge. */
-function honestFallback(agentId: AgentId): string {
-  const def = agentRegistry[agentId]
-  const topics = def.isCoordinator ? 'Manchester, cybersecurity, global events, or space' : def.responsibilities.slice(0, 2).join(' or ').toLowerCase()
-  return `I don't have a model connected for open-ended questions like that yet. I can help directly with ${topics} — or connect a local model from Jarvis's room for full conversation.`
+function initialToolActivity(): Record<AgentId, ToolActivityRecord[]> {
+  const activity = {} as Record<AgentId, ToolActivityRecord[]>
+  for (const id of Object.keys(agentRegistry) as AgentId[]) {
+    activity[id] = []
+  }
+  return activity
+}
+
+/**
+ * Only reached once a question has already failed the knowledge base AND
+ * doesn't match any specialist's domain — a genuinely unanswerable request
+ * in heuristic mode. Still an invitation, not an error.
+ */
+function genericFallback(): string {
+  return "I don't have real depth on that without a connected model — connect one from my room and I can actually help, or ask me something I've got solid info on."
+}
+
+/** Jarvis's fallback still points somewhere useful when a specialist's domain is relevant, instead of a flat dead end. */
+function jarvisFallback(text: string): string {
+  const specialist = detectRelevantSpecialists(text)[0]
+  if (specialist) {
+    return `I don't have detail on that without a connected model — ${specialist.name} might know more if you ask directly, or connect a local model from my room.`
+  }
+  return genericFallback()
 }
 
 let simulationTimer: ReturnType<typeof setTimeout> | null = null
@@ -172,12 +211,140 @@ export const useFacilityStore = create<FacilityState>((set, get) => {
   function buildChatPrompt(agentId: AgentId, latestUserText: string, extraContext?: string): LLMMessage[] {
     const def = agentRegistry[agentId]
     const history = get().conversations[agentId].slice(-8)
-    const messages: LLMMessage[] = [{ role: 'system', content: def.systemPrompt }]
+    const messages: LLMMessage[] = [{ role: 'system', content: buildSystemPrompt(def, { hasTools: false }) }]
     for (const turn of history) {
       messages.push({ role: turn.role === 'user' ? 'user' : 'assistant', content: turn.content })
     }
     messages.push({ role: 'user', content: extraContext ? `${extraContext}\n\n${latestUserText}` : latestUserText })
     return messages
+  }
+
+  function pushToolActivity(agentId: AgentId, record: ToolActivityRecord) {
+    set((s) => ({ toolActivity: { ...s.toolActivity, [agentId]: [record, ...s.toolActivity[agentId]].slice(0, 50) } }))
+  }
+
+  /**
+   * The bridge between the tool-calling loop and the facility's existing intelligence/delegation
+   * system. This is what replaces keyword-based forced delegation when a real model is connected:
+   * the model itself decides whether to call `consult_specialist`, with what objective — it is a
+   * genuine tool, not a pre-LLM routing gate. `check_current_info` gives every agent (including
+   * specialists) the same self-serve access to their own current-information tools.
+   */
+  function buildBridgeTools(agentId: AgentId) {
+    const def = agentRegistry[agentId]
+    const tools: DevTool[] = []
+
+    if (def.toolIds.length > 0) {
+      tools.push({
+        name: 'check_current_info',
+        description: `Check your own current-information sources for something time-sensitive — covers: ${def.responsibilities.join(', ')}. Use this only when the answer genuinely depends on up-to-date information, not for things you already know.`,
+        permission: 'read',
+        parameters: { type: 'object', properties: {}, required: [] },
+        async run() {
+          const found = await researchForChat(agentId)
+          if (!found) return { ok: false, output: 'No current information came back.' }
+          return { ok: true, output: `${found.title} — ${found.summary} (source: ${found.sourceLabel})` }
+        },
+      })
+    }
+
+    if (def.isCoordinator) {
+      tools.push({
+        name: 'consult_specialist',
+        description:
+          'Ask a specialist colleague to check something using their own current-information tools. Specialists: mancy (Manchester/local), null (cybersecurity), atlas (global/world events), orbit (science/space). Use this only when their live information would genuinely improve your answer — not just because a message mentions their topic.',
+        permission: 'read',
+        parameters: {
+          type: 'object',
+          properties: {
+            specialist: { type: 'string', description: 'One of: mancy, null, atlas, orbit' },
+            objective: { type: 'string', description: 'What you want them to look into.' },
+          },
+          required: ['specialist'],
+        },
+        async run(args) {
+          const id = String(args.specialist ?? '').toLowerCase() as AgentId
+          if (!specialistIds.includes(id)) return { ok: false, output: `"${String(args.specialist)}" isn't a known specialist. Choose one of: ${specialistIds.join(', ')}.` }
+          if (get().runtimes[id].state !== 'idle') return { ok: false, output: `${agentRegistry[id].name} is busy right now — try again shortly.` }
+          setAgentState('jarvis', 'communicating', `Asking ${agentRegistry[id].name} to look into this`)
+          send('jarvis', id, 'question', String(args.objective ?? 'General check-in'))
+          const found = await researchForChat(id)
+          if (!found) {
+            setAgentState('jarvis', 'processing', null)
+            return { ok: false, output: `${agentRegistry[id].name} didn't find anything current on that.` }
+          }
+          send(id, 'jarvis', 'response', `${found.title} — ${found.summary}`)
+          setAgentState('jarvis', 'processing', 'Incorporating response')
+          return { ok: true, output: `${agentRegistry[id].name} found: ${found.title} — ${found.summary} (source: ${found.sourceLabel})` }
+        },
+      })
+    }
+
+    return tools
+  }
+
+  /**
+   * The real agent loop: plan -> select a tool -> execute it for real -> observe the actual result ->
+   * reason -> repeat, until the model gives a final answer with no further tool calls, or the step
+   * cap is hit. Tools are the bridge tools above (always available to a real model) plus the local
+   * filesystem/terminal tools (only when the dev-tools server responded and autonomy > 0). Nothing
+   * here is simulated — every tool call is a genuine request/response.
+   */
+  async function runAgentLoop(agentId: AgentId, userText: string): Promise<ChatMessage> {
+    const def = agentRegistry[agentId]
+    const brain = get().brains[agentId]
+    const llm = resolveLLM(brain)
+    const devTools = get().devToolsAvailable ? toolsForLevel(get().autonomyLevel) : []
+    const tools = [...buildBridgeTools(agentId), ...devTools]
+    const toolSpecs: ToolSpec[] = tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }))
+
+    const history = get().conversations[agentId].slice(-8)
+    const messages: LLMMessage[] = [{ role: 'system', content: buildSystemPrompt(def, { hasTools: toolSpecs.length > 0 }) }]
+    for (const turn of history) messages.push({ role: turn.role === 'user' ? 'user' : 'assistant', content: turn.content })
+    messages.push({ role: 'user', content: userText })
+
+    let toolCallCount = 0
+    for (let step = 0; step < 8; step++) {
+      setAgentState(agentId, step === 0 ? 'thinking' : 'processing', step === 0 ? 'Planning' : 'Reasoning about the result')
+      const response = await llm.generate({ messages, tools: toolSpecs })
+
+      if (!response.toolCalls || response.toolCalls.length === 0) {
+        setAgentState(agentId, 'idle', null)
+        return agentChatMessage(response.content, {
+          modelMeta: { providerId: response.providerId, model: response.model, latencyMs: response.latencyMs },
+        })
+      }
+
+      messages.push({ role: 'assistant', content: response.content, toolCalls: response.toolCalls })
+
+      for (const call of response.toolCalls) {
+        toolCallCount++
+        const tool = tools.find((t) => t.name === call.name)
+        setAgentState(agentId, 'researching', `Using ${call.name}`)
+        let output: string
+        let ok: boolean
+        if (!tool) {
+          output = `Tool "${call.name}" isn't available at the current autonomy level.`
+          ok = false
+        } else {
+          try {
+            const result = await tool.run(call.arguments)
+            output = result.output
+            ok = result.ok
+          } catch (err) {
+            output = `Error: ${err instanceof Error ? err.message : String(err)}`
+            ok = false
+          }
+        }
+        pushToolActivity(agentId, { id: makeId('tool'), agentId, tool: call.name, args: call.arguments, ok, output, timestamp: Date.now() })
+        messages.push({ role: 'tool', content: output, toolName: call.name })
+      }
+    }
+
+    setAgentState(agentId, 'idle', null)
+    return agentChatMessage(
+      `I made ${toolCallCount} tool calls but didn't reach a final answer within my step limit — want me to keep going, or narrow the task?`,
+    )
   }
 
   async function runSpecialistCycle(id: AgentId) {
@@ -313,45 +480,58 @@ export const useFacilityStore = create<FacilityState>((set, get) => {
     return { title: item.title, summary: item.summary, sourceLabel: result.sourceLabel, isMock: result.isMock }
   }
 
-  /** Jarvis delegates a user question to a specialist, visibly, then answers the user with the result — never with a memory dump. */
+  /** Jarvis delegates a user question to one or more specialists, visibly, then answers with the results — never with a memory dump. */
   async function delegateForChat(userText: string): Promise<ChatMessage> {
     const jarvisBrain = get().brains.jarvis
-    const specialist = detectRelevantSpecialist(userText)
+    const candidates = detectRelevantSpecialists(userText).filter((d) => get().runtimes[d.id].state === 'idle')
 
-    if (!specialist || get().runtimes[specialist.id].state !== 'idle') {
-      return agentChatMessage(honestFallback('jarvis'))
+    if (candidates.length === 0) {
+      return agentChatMessage(genericFallback())
     }
 
-    setAgentState('jarvis', 'communicating', `Asking ${specialist.name} to look into this`)
-    send('jarvis', specialist.id, 'question', userText)
-    await sleep(randomBetween(300, 500))
+    const findings: { specialist: AgentId; name: string; title: string; summary: string; sourceLabel: string }[] = []
 
-    const found = await researchForChat(specialist.id)
-    if (!found) {
-      setAgentState('jarvis', 'idle', null)
-      return agentChatMessage(`I asked ${specialist.name}, but nothing current came back on that.`)
+    // Sequential, not parallel: each specialist's room visibly goes through its own research cycle before the next starts.
+    for (const specialist of candidates) {
+      setAgentState('jarvis', 'communicating', `Asking ${specialist.name} to look into this`)
+      send('jarvis', specialist.id, 'question', userText)
+      await sleep(randomBetween(300, 500))
+
+      const found = await researchForChat(specialist.id)
+      if (found) {
+        send(specialist.id, 'jarvis', 'response', `${found.title} — ${found.summary}`)
+        findings.push({ specialist: specialist.id, name: specialist.name, ...found })
+      }
     }
-    send(specialist.id, 'jarvis', 'response', `${found.title} — ${found.summary}`)
 
     setAgentState('jarvis', 'processing', 'Answering')
     const isReal = jarvisBrain.provider !== 'mock'
     let reply: string
     let modelMeta: ChatMessage['modelMeta']
-    if (isReal) {
+
+    if (findings.length === 0) {
+      reply = `I asked ${candidates.map((c) => c.name).join(' and ')}, but nothing current came back on that.`
+    } else if (isReal) {
       const llm = resolveLLM(jarvisBrain)
+      const findingsText = findings.map((f) => `${f.name} found: "${f.title}: ${f.summary}"`).join(' ')
       const messages = buildChatPrompt(
         'jarvis',
         userText,
-        `${specialist.name} checked and found: "${found.title}: ${found.summary}". Answer the user's question naturally in 1-3 sentences, mentioning that you checked with ${specialist.name}.`,
+        `${findingsText} Answer the user's question naturally in 1-4 sentences, mentioning who you checked with.`,
       )
       const response = await llm.generate({ messages })
       reply = response.content
       modelMeta = { providerId: response.providerId, model: response.model, latencyMs: response.latencyMs }
     } else {
-      reply = `I checked with ${specialist.name} — ${found.title}: ${found.summary}`
+      reply = findings.map((f) => `${f.name}: ${f.title} — ${f.summary}`).join(' ')
     }
+
     setAgentState('jarvis', 'idle', null)
-    return agentChatMessage(reply, { modelMeta, delegatedTo: specialist.id })
+    return agentChatMessage(reply, {
+      modelMeta,
+      delegatedTo: findings.length ? findings.map((f) => f.specialist) : undefined,
+      sources: findings.length ? findings.map((f) => f.sourceLabel) : undefined,
+    })
   }
 
   return {
@@ -363,6 +543,10 @@ export const useFacilityStore = create<FacilityState>((set, get) => {
     messages: [],
     simulationRunning: false,
     localModelStatus: 'disconnected',
+    devToolsAvailable: false,
+    workspaceRoot: null,
+    autonomyLevel: 0,
+    toolActivity: initialToolActivity(),
 
     enter: () => set({ view: 'facility' }),
     goTo: (view) => set({ view }),
@@ -397,12 +581,22 @@ export const useFacilityStore = create<FacilityState>((set, get) => {
       }
     },
 
+    checkDevTools: async () => {
+      const { available, workspaceRoot } = await checkDevToolsAvailable()
+      set({ devToolsAvailable: available, workspaceRoot })
+    },
+    setAutonomyLevel: (level) => set({ autonomyLevel: level }),
+
     sendChatMessage: async (agentId, text) => {
       const trimmed = text.trim()
       if (!trimmed) return
       appendChat(agentId, { id: makeId('chat'), role: 'user', content: trimmed, timestamp: Date.now() })
 
+      const brain = get().brains[agentId]
+      const isReal = brain.provider !== 'mock'
       const intent = classifyIntent(trimmed)
+
+      // Greetings/thanks are cheap and universally appropriate — answered the same way regardless of model state.
       if (intent === 'greeting') {
         appendChat(agentId, agentChatMessage(pickGreeting(agentId)))
         return
@@ -412,17 +606,31 @@ export const useFacilityStore = create<FacilityState>((set, get) => {
         return
       }
 
-      const brain = get().brains[agentId]
-      const isReal = brain.provider !== 'mock'
+      // A connected model is the conversation engine, full stop — no keyword-based forced delegation
+      // gate in front of it. If it supports tool-calling, `consult_specialist` and `check_current_info`
+      // (see buildBridgeTools) are just tools available to it; the MODEL decides whether to use them,
+      // exactly like any other tool call. This is what "Jarvis decides delegation" actually means.
+      if (isReal) {
+        const llm = resolveLLM(brain)
+        if (llm.supportsTools) {
+          const reply = await runAgentLoop(agentId, trimmed)
+          appendChat(agentId, reply)
+          return
+        }
+        const response = await llm.generate({ messages: buildChatPrompt(agentId, trimmed) })
+        appendChat(agentId, agentChatMessage(response.content, { modelMeta: { providerId: response.providerId, model: response.model, latencyMs: response.latencyMs } }))
+        return
+      }
 
-      // Jarvis delegates when the question needs current, real-world research from a specialist domain.
+      // ---- Everything below only runs with NO model connected — the heuristic fallback layer. ----
+      // A bare topic or a follow-up is never treated as an unanswerable question — only a specific
+      // request that matches nothing at all is. This is intentionally keyword-based: it is a
+      // documented, honestly-labeled fallback, not a substitute for real reasoning.
       if (agentId === 'jarvis' && intent === 'research') {
         const reply = await delegateForChat(trimmed)
         appendChat('jarvis', reply)
         return
       }
-
-      // A specialist asked directly for something time-sensitive researches it itself.
       if (agentId !== 'jarvis' && intent === 'research') {
         setAgentState(agentId, 'thinking', 'Checking current sources')
         await sleep(randomBetween(300, 500))
@@ -431,31 +639,43 @@ export const useFacilityStore = create<FacilityState>((set, get) => {
           appendChat(agentId, agentChatMessage(`I couldn't find anything current on that right now.`))
           return
         }
-        if (isReal) {
-          const llm = resolveLLM(brain)
-          const messages = buildChatPrompt(
-            agentId,
-            trimmed,
-            `You just checked and found: "${found.title}: ${found.summary}". Answer the user's question naturally in 1-2 sentences.`,
+        appendChat(agentId, agentChatMessage(`${found.title} — ${found.summary}`, { sources: [found.sourceLabel] }))
+        return
+      }
+      if (intent === 'chitchat') {
+        appendChat(agentId, agentChatMessage(pickChitchat()))
+        return
+      }
+      if (intent === 'continuation') {
+        appendChat(agentId, agentChatMessage(continuationReply(get().conversations[agentId].length > 1)))
+        return
+      }
+      if (intent === 'topic') {
+        if (agentId === 'jarvis') {
+          const knowledge = matchKnowledgeAnywhere('jarvis', trimmed)
+          if (knowledge) {
+            appendChat('jarvis', agentChatMessage(knowledge))
+            return
+          }
+          const specialist = detectRelevantSpecialists(trimmed)[0]
+          appendChat(
+            'jarvis',
+            agentChatMessage(specialist ? topicClarification(specialist, trimmed) : `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)} — tell me a bit more about what you're after.`),
           )
-          const response = await llm.generate({ messages })
-          appendChat(agentId, agentChatMessage(response.content, { modelMeta: { providerId: response.providerId, model: response.model, latencyMs: response.latencyMs } }))
-        } else {
-          appendChat(agentId, agentChatMessage(`${found.title} — ${found.summary}`))
+          return
         }
+        const ownKnowledge = matchKnowledge(agentId, trimmed)
+        appendChat(agentId, agentChatMessage(ownKnowledge ?? topicClarification(agentRegistry[agentId], trimmed)))
         return
       }
 
-      // Direct answer: knowledge base first, then a real model if connected, else an honest fallback.
-      if (!isReal) {
-        const knowledge = matchKnowledge(agentId, trimmed)
-        appendChat(agentId, agentChatMessage(knowledge ?? honestFallback(agentId)))
+      // intent === 'other': a real question or request.
+      const knowledge = agentId === 'jarvis' ? matchKnowledgeAnywhere('jarvis', trimmed) : matchKnowledge(agentId, trimmed)
+      if (knowledge) {
+        appendChat(agentId, agentChatMessage(knowledge))
         return
       }
-
-      const llm = resolveLLM(brain)
-      const response = await llm.generate({ messages: buildChatPrompt(agentId, trimmed) })
-      appendChat(agentId, agentChatMessage(response.content, { modelMeta: { providerId: response.providerId, model: response.model, latencyMs: response.latencyMs } }))
+      appendChat(agentId, agentChatMessage(agentId === 'jarvis' ? jarvisFallback(trimmed) : outOfDomainReply(agentId, trimmed)))
     },
   }
 })

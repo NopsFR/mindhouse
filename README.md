@@ -107,6 +107,77 @@ Two paths exist, both genuinely free:
    *every* visitor a real model would mean a server holding a paid or free-tier API key, which
    isn't part of this budget.
 
+## Real tools, local-only
+
+Everything above describes what runs on the deployed site for every visitor. Locally, running
+`npm run dev` also starts a second thing: a genuine tool-execution layer, gated behind a hard
+boundary so the public site never gains it.
+
+- **`vite-plugins/devTools.ts`** registers `apply: 'serve'` — Vite's own mechanism for "only exists
+  under `vite dev`, never under `vite build`." It opens `/__devtools/fs/*` (list/read/write/mkdir/
+  delete) and `/__devtools/exec` as same-origin middleware routes, all confined to a single
+  `agent-workspace/` directory via `path.resolve` + a `startsWith(WORKSPACE_ROOT)` check — a request
+  for `../../etc/passwd` is rejected, not sandboxed-and-allowed. Verified directly: `npm run build`
+  then `grep` the output bundle for `child_process` / `node:fs` / `agent-workspace` — none present.
+  Verified live: curled every endpoint including a path-escape attempt, which was correctly refused.
+- **`src/devtools/`** is the client side — `registry.ts` declares the tools (`list_directory`,
+  `read_file`, `write_file`, `make_directory`, `delete_path`, `run_command`) and which autonomy
+  level unlocks each; `client.ts` talks to the routes above; on the deployed site
+  `checkDevToolsAvailable()` simply gets a 404 and everything reports "not running" — that's the
+  entire security model, not a flag anyone has to remember to set.
+- **Autonomy levels** (`AutonomyLevel = 0 | 1 | 2`, chosen in Jarvis's room footer): 0 = chat only,
+  no tools; 1 = read-only workspace tools; 2 = read + write + run commands. Nothing above level 0
+  is offered unless the dev-tools server actually responded.
+- **The agent loop** (`runAgentLoop` in `state/store.ts`) is real ReAct, not a scripted sequence: it
+  sends the conversation plus the currently-unlocked tool specs to the LLM, and if the model returns
+  a `tool_calls` response, the loop executes that specific call, appends the real result as a `tool`
+  message, and asks the model to continue — up to 8 steps. Every call is logged to
+  `toolActivity[agentId]` and shown in the **Tools** panel (`ToolActivityList.tsx`) with no
+  synthetic "thinking…" filler standing in for a step that didn't happen.
+- **Delegation is a tool, not a keyword match.** `buildBridgeTools()` exposes
+  `consult_specialist` (Jarvis only) and `check_current_info` (any agent with `toolIds`) as
+  ordinary entries in the same tool list the model sees — the model chooses to call them the same
+  way it chooses to call `read_file`. There is no code path that scans the user's message for
+  "Manchester" or "CVE" and forces a specialist hand-off; that heuristic only exists in the no-model
+  fallback described below.
+- **Tool-calling support is real, not assumed.** `llm/providers/ollama.ts` sets
+  `supportsTools: true` and speaks Ollama's actual `/api/chat` `tools` / `tool_calls` wire format;
+  `mock` and `cloud` both declare `supportsTools: false` so the loop never pretends a provider that
+  can't do function-calling is doing it.
+
+**Honesty about what could and couldn't be verified here:** Ollama isn't installed in this sandbox,
+so the live decision-making — does a real local model actually choose `consult_specialist` at the
+right moment, does it retry sensibly after a failed tool call — could not be exercised end-to-end.
+What was verified is everything that doesn't require a live model: the endpoints, the sandboxing,
+the production-bundle exclusion, the mode-gating in `sendChatMessage`, and that fallback-mode
+conversation quality didn't regress. Test this part on your own machine with Ollama running and a
+tool-calling-capable model pulled (e.g. `qwen2.5`, `llama3.1`, `mistral-nemo`).
+
+## The reasoning layer (composable system prompt)
+
+`agents/prompt.ts` builds each agent's system prompt from fragments rather than one hard-coded
+block, so policy can be added or removed per agent without duplicating text:
+
+```ts
+buildSystemPrompt(def, { hasTools }) →
+  def.systemPrompt           // this agent's specific identity
+  + REASONING_POLICY         // act over explain; ask only when genuinely ambiguous; no forced categories
+  + TOOL_POLICY              // only if hasTools — never claim a tool ran when it didn't
+  + SPECIALIST_POLICY        // only if def.isCoordinator — delegate by judgment, not keyword
+  + MEMORY_POLICY            // never paste internal memory into a chat reply
+  + SAFETY_POLICY            // judge the actual objective, don't pattern-match on words like "hack"
+  + COMMUNICATION_STYLE      // direct, no disclaimers, no "Certainly! I'd be happy to..."
+```
+
+This only governs real-model mode. In `state/store.ts`, `sendChatMessage` checks `isReal`
+immediately after the cheap greeting/thanks shortcut, before any keyword logic runs — a connected
+real model goes straight to `runAgentLoop` (or a plain `generate()` call if the provider can't do
+tool-calling) and never touches the heuristic layer. Everything below that point in the function —
+forced delegation, topic clarification, chitchat matching, the knowledge-base fallback — is real
+code that only executes with **no model connected**, which is also why it's still there: it's the
+honest, disclosed answer for the £0-budget "someone visits with no local model" case, not dead code
+being routed around.
+
 ## Development
 
 ```bash

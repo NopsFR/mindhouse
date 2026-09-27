@@ -2,11 +2,13 @@ import { useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { agentRegistry, specialistIds } from '../agents/registry'
 import { useFacilityStore } from '../state/store'
+import { AUTONOMY_LABELS, type AutonomyLevel } from '../devtools/types'
 import { BrainReadout } from '../components/BrainReadout'
 import { StatusTag } from '../components/StatusTag'
 import { ChatDock } from '../components/ChatDock'
 import { MemoryPanel } from '../components/MemoryPanel'
 import { TaskList } from '../components/TaskList'
+import { ToolActivityList } from '../components/ToolActivityList'
 
 const ACCENT = agentRegistry.jarvis.accent
 
@@ -47,7 +49,35 @@ function LocalModelControl() {
   )
 }
 
-type Panel = 'memory' | 'tasks' | null
+/** Real, not decorative: only rendered when the local dev-tools server actually responded. */
+function AutonomyControl() {
+  const available = useFacilityStore((s) => s.devToolsAvailable)
+  const workspaceRoot = useFacilityStore((s) => s.workspaceRoot)
+  const level = useFacilityStore((s) => s.autonomyLevel)
+  const setAutonomyLevel = useFacilityStore((s) => s.setAutonomyLevel)
+
+  if (!available) {
+    return <span className="font-mono text-[10px] text-[var(--color-text-faint)]">dev tools: not running (start with npm run dev)</span>
+  }
+
+  return (
+    <div className="flex items-center gap-2 font-mono text-[10px] text-[var(--color-text-faint)]">
+      <span title={workspaceRoot ?? undefined}>workspace ready ·</span>
+      {([0, 1, 2] as AutonomyLevel[]).map((l) => (
+        <button
+          key={l}
+          onClick={() => setAutonomyLevel(l)}
+          className="uppercase tracking-[0.06em] transition-colors"
+          style={{ color: level === l ? ACCENT : 'var(--color-text-faint)' }}
+        >
+          {AUTONOMY_LABELS[l]}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+type Panel = 'memory' | 'tasks' | 'tools' | null
 
 export function CentralChamber() {
   const runtime = useFacilityStore((s) => s.runtimes.jarvis)
@@ -91,6 +121,7 @@ export function CentralChamber() {
 
       <footer className="relative z-10 flex flex-wrap items-center justify-center gap-x-8 gap-y-2 border-t border-[var(--color-hairline)] px-6 py-3">
         <LocalModelControl />
+        <AutonomyControl />
         <div className="flex items-center gap-4 font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-faint)]">
           {specialistIds.map((id) => (
             <span key={id} style={{ color: runtimes[id].state !== 'idle' ? agentRegistry[id].accent : undefined }}>
@@ -99,7 +130,7 @@ export function CentralChamber() {
           ))}
         </div>
         <div className="flex items-center gap-5">
-          {(['memory', 'tasks'] as const).map((p) => (
+          {(['memory', 'tasks', 'tools'] as const).map((p) => (
             <button
               key={p}
               onClick={() => setPanel((cur) => (cur === p ? null : p))}
@@ -133,6 +164,7 @@ export function CentralChamber() {
             >
               {panel === 'memory' && <MemoryPanel agentId="jarvis" />}
               {panel === 'tasks' && <TaskList agentId="jarvis" />}
+              {panel === 'tools' && <ToolActivityList agentId="jarvis" />}
             </motion.div>
           </>
         )}

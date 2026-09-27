@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { AnimatePresence, LayoutGroup } from 'motion/react'
 import { useFacilityStore } from './state/store'
 import { Intro } from './components/Intro'
@@ -10,6 +11,13 @@ import { OrbitRoom } from './rooms/OrbitRoom'
 
 export default function App() {
   const view = useFacilityStore((s) => s.view)
+  const checkDevTools = useFacilityStore((s) => s.checkDevTools)
+
+  // Harmless everywhere: on the deployed static site this endpoint doesn't exist and the check
+  // just resolves to "unavailable" — see devtools/client.ts and vite-plugins/devTools.ts.
+  useEffect(() => {
+    void checkDevTools()
+  }, [checkDevTools])
 
   return (
     <div className="grain relative h-full w-full">

@@ -36,9 +36,21 @@ export function ChatDock({ agentId }: { agentId: AgentId }) {
               {l.role === 'agent' && <span style={{ color: def.accent }}>{def.name}: </span>}
               {l.content}
             </p>
-            {l.delegatedTo && (
-              <p className="mt-0.5 font-mono text-[9px]" style={{ color: agentRegistry[l.delegatedTo].accent }}>
-                checked with {agentRegistry[l.delegatedTo].name}
+            {((l.delegatedTo && l.delegatedTo.length > 0) || (l.sources && l.sources.length > 0)) && (
+              <p className="mt-0.5 font-mono text-[9px] text-[var(--color-text-faint)]">
+                {l.delegatedTo && l.delegatedTo.length > 0 && (
+                  <>
+                    checked with{' '}
+                    {l.delegatedTo.map((id, i) => (
+                      <span key={id}>
+                        {i > 0 && ', '}
+                        <span style={{ color: agentRegistry[id].accent }}>{agentRegistry[id].name}</span>
+                      </span>
+                    ))}
+                    {l.sources && l.sources.length > 0 && ' · '}
+                  </>
+                )}
+                {l.sources && l.sources.length > 0 && l.sources.join(', ')}
               </p>
             )}
             {l.modelMeta && (

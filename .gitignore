@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 
 .claude/scheduled_tasks.lock
+
+# Jarvis's local dev-tools workspace — real files it creates/edits locally, never committed.
+/agent-workspace/

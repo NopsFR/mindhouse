@@ -16,6 +16,7 @@ export function createUnconfiguredCloudProvider(label: string): LLMProvider {
   return {
     id: 'cloud',
     name: `Cloud (${label}) — not connected`,
+    supportsTools: false,
     async isAvailable() {
       return false
     },

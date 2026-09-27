@@ -21,6 +21,8 @@ function condense(text: string): string {
 export const mockLLMProvider: LLMProvider = {
   id: 'mock',
   name: 'Simulation',
+  /** Never true — the heuristic layer cannot decide to call a tool, so it must never claim to. */
+  supportsTools: false,
   async isAvailable() {
     return true
   },

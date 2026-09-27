@@ -13,6 +13,8 @@ export interface ChatMessage {
   timestamp: number
   /** Present only when a real model produced this reply (vs. the heuristic layer). */
   modelMeta?: { providerId: string; model: string; latencyMs: number }
-  /** Present only when answering this required asking another agent — shown as a small aside, not inline text. */
-  delegatedTo?: AgentId
+  /** Present only when answering this required asking one or more other agents — shown as a small aside, not inline text. */
+  delegatedTo?: AgentId[]
+  /** Where a delegated finding actually came from (a tool's sourceLabel) — only ever set when a real tool call happened. */
+  sources?: string[]
 }

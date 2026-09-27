@@ -9,8 +9,9 @@ import { MemoryPanel } from '../components/MemoryPanel'
 import { TaskList } from '../components/TaskList'
 import { ChatDock } from '../components/ChatDock'
 import { ActivityFeed } from '../components/ActivityFeed'
+import { ToolActivityList } from '../components/ToolActivityList'
 
-type Panel = 'memory' | 'tasks' | 'chat' | null
+type Panel = 'memory' | 'tasks' | 'tools' | 'chat' | null
 
 interface RoomShellProps {
   agentId: AgentId
@@ -75,7 +76,7 @@ export function RoomShell({ agentId, visual }: RoomShellProps) {
 
       {/* Collapsed strip — the only permanent chrome besides the header */}
       <div className="flex items-center justify-center gap-8 border-t border-[var(--color-hairline)] py-3">
-        {(['memory', 'tasks', 'chat'] as const).map((p) => (
+        {(['memory', 'tasks', 'tools', 'chat'] as const).map((p) => (
           <button
             key={p}
             onClick={() => toggle(p)}
@@ -108,6 +109,7 @@ export function RoomShell({ agentId, visual }: RoomShellProps) {
             >
               {panel === 'memory' && <MemoryPanel agentId={agentId} />}
               {panel === 'tasks' && <TaskList agentId={agentId} />}
+              {panel === 'tools' && <ToolActivityList agentId={agentId} />}
               {panel === 'chat' && (
                 <div className="h-[50vh] max-h-[420px]">
                   <ChatDock agentId={agentId} />

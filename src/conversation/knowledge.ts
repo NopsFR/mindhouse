@@ -1,4 +1,5 @@
 import type { AgentId } from '../agents/types'
+import { agentIds } from '../agents/registry'
 
 /**
  * A small, hand-written knowledge base — real, accurate, curated answers to
@@ -52,7 +53,7 @@ const knowledgeBase: Record<AgentId, KnowledgeEntry[]> = {
       ],
     },
     {
-      keywords: ['facts about manchester', 'tell me about manchester', 'interesting about manchester'],
+      keywords: ['facts about manchester', 'tell me about manchester', 'interesting about manchester', 'manchester famous', 'famous for'],
       answers: [
         "Manchester was the world's first industrialized city, gave its name to 'Mancunian', and the Bridgewater Canal that runs through it is often called the first true canal of the industrial era.",
         'Manchester has two Premier League football clubs, a music history running from Joy Division to Oasis, and was where the first stored-program computer ran in 1948.',
@@ -149,4 +150,23 @@ export function matchKnowledge(agentId: AgentId, text: string): string | null {
     if (score > 0 && (!best || score > best.score)) best = { score, answers: entry.answers }
   }
   return best ? pick(best.answers) : null
+}
+
+/**
+ * Jarvis doesn't have his own curated facts about Manchester or CVEs — the
+ * specialists do. Rather than dead-ending, Jarvis's fallback layer can draw
+ * on their static knowledge directly (no visible delegation, no research
+ * task — this is "knowing" the way having specialists around makes you
+ * better-informed, not "having researched it"). Live, current-information
+ * questions still go through the real delegation flow in state/store.ts.
+ */
+export function matchKnowledgeAnywhere(agentId: AgentId, text: string): string | null {
+  const own = matchKnowledge(agentId, text)
+  if (own) return own
+  for (const id of agentIds) {
+    if (id === agentId) continue
+    const found = matchKnowledge(id, text)
+    if (found) return found
+  }
+  return null
 }
